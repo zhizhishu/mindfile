@@ -236,6 +236,8 @@ When a repeated workflow appears three or more times, consider whether it should
 - A project-local SOP in `AGENTS.md` when it changes how agents should work inside this project.
 - A stable fact or decision in `PROJECT_CONTEXT.md` when it explains the project.
 
+**Cross-tool projects (AGENTS.md interop).** Codex/Cursor read `AGENTS.md` natively; **Claude Code reads `CLAUDE.md`, not `AGENTS.md`** (verified against official docs). To share one rule set across tools, keep the shared rules in the project `AGENTS.md` and bridge from `CLAUDE.md` with a one-line `@AGENTS.md` import — on Windows use the `@import`, not `ln -s` (symlinks need admin/Developer Mode). Claude-specific additions go *below* the import. Keep `AGENTS.md`/`PROJECT_ID.md`/`PROJECT_CONTEXT.md` plain-Markdown (no tool-specific syntax) so they stay portable.
+
 ## Project Tidy & Categorization
 
 When a project folder is messy (duplicate copies, scattered predecessor/reference material, mixed-in private files or plaintext secrets), tidy it into a **four-layer structure + one public/local boundary**: `[PROJECT]` deployable code at root (the only public layer) · `[MEMORY]` mindfile's files at root · `reference/` upstream/predecessor/forked code · `archive/` backups/history/`secrets/`. **Code stays at root** — never nest into a `project/` subfolder (breaks Docker/build/deploy). Only PROJECT is public; MEMORY + `reference/` + `archive/` are gitignored local-only; `archive/secrets/` is the single plaintext-secret location (可本地落盘、绝不外发上传、绝不进 git、拿不准问用户). Tidying moves files = **high-risk (§9)**: inventory → classify → propose → back up → apply → set `.gitignore` boundary → verify (`git status` shows only PROJECT; no stray secret outside `archive/secrets/`) → 留痕. Full spec, `.gitignore` block, and step-by-step SOP: read `references/project-tidy.md`.
@@ -331,6 +333,14 @@ Use `scripts/mindfile_guard.py audit "<project_root>"` for a read-only pass that
 
 **④ Importance audit** (`audit`, read-only) scores each LOG/archive entry by `type × recency × referenced − superseded` and surfaces `prune_candidates` (old + low-type + unreferenced + superseded → suggest archive/drop) and `cold_review` (old + low-type + unreferenced → suggest review), while guarding decisions/pitfalls/referenced entries out. **Suggests only — deleting is §9 and needs explicit user confirmation.**
 
+### Decisions & time-sensitive facts (治 PROJECT_CONTEXT 陈旧)
+
+The LOG metabolism above handles episodic history; two lighter conventions keep the **fact/decision layer** honest:
+
+- **Architecture decisions → append-only `decisions.md` (optional 6th file).** When architecture-decision records start crowding `PROJECT_CONTEXT.md`, spin them into `decisions.md`: one block per decision (date · what · why · alternatives), **append-only**; when a later decision overrides an earlier one, tag the old block `SUPERSEDED by <date>` instead of deleting it. Keeps the "why we chose X" trail without letting it drown the stable-fact file.
+- **Time-sensitive facts carry a validity date.** A `PROJECT_CONTEXT.md` fact that will rot (a count, a health status, a "current" state, a fast-moving external constraint) gets a `valid-as-of: YYYY-MM` marker. On later review, a fact past a reasonable staleness window is **re-verified, not trusted blindly** — mark it `needs-review`, never auto-delete. This is the fact-layer twin of "no volatile state as content": don't silently carry a stale fact forward.
+- **Boundary:** a **platform/tool-general** pitfall (holds across projects) belongs in global `auto-memory`; a **this-project** decision/fact belongs in `PROJECT_CONTEXT.md`/`decisions.md`. Don't mix project specifics into the global store.
+
 ## Initialization Rules
 
 - Never initialize a parent storage root.
@@ -354,6 +364,7 @@ When initializing a confirmed project, create:
 Optional:
 
 - `PROJECT_MAP.md` for large projects or projects with repeated navigation cost.
+- `decisions.md` (append-only ADR log) when architecture decisions accumulate — see the "Decisions & time-sensitive facts" note under LOG lifecycle.
 
 For exact templates, read `references/templates.md`.
 

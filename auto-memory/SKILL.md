@@ -41,7 +41,8 @@ python <各家 skills 目录>/auto-memory/automemory_cli.py <cmd>
 MEMORY.md 每会话**整份自动加载**——一行一条堆到 100+ 就超读取上限(~24.4KB)。治本 = **MOC 两级索引**(2026-07-17 上线), 不是"按新近度分冷热":
 
 - **① MOC 两级结构**: `MEMORY.md`(根, 自动加载, 要小) = **①常驻必读全留 + 一张"分类子索引目录"**(②→`MEMORY.tools.md` / ③→`MEMORY.projects.md`)。②③ 的索引行**全在子索引文件里、不自动加载、按需读**。这样自动加载层大小**只跟类目数挂钩、与总条数脱钩**——涨到几百条也不爆预算。`recall`(光杆)打印根+子索引 footer; `recall --index tools|projects` 拉子索引全文; `recall -q` 搜全部 fact 全文(**零信息损失**, 子索引里的条照样命中)。一次性重构器 `~/.claude/tools/automemory_restructure.py`(dry-run 默认, --apply 先备份, 绝不动 fact)。
-- **② 耐久类型标签**(record `--durability axiom|pattern|workaround|project-state` → frontmatter `metadata.durability`): 让保留由**内在耐久度**驱动而非 mtime——`axiom`(铁律)永不归档、`workaround`(工具/版本相关)会过气加冷权重。治"真铁律放 40 天没碰被误判冷"。
+- **② 耐久类型标签**(record `--durability axiom|pattern|workaround|project-state` → frontmatter `metadata.durability`): 让保留由**内在耐久度**驱动而非 mtime——`axiom`(铁律)永不归档、`workaround`(工具/版本相关)会过气加冷权重。治"真铁律放 40 天没碰被误判冷"。(冷打分里目前只有 `axiom`/`workaround` 真改分, `pattern`/`project-state` 暂为语义标注、回落默认。)
+- **⑤ 时态失效标记**(会漂的事实): 会随时间腐烂的 fact(健康状态/在线数/余额/"当前"状态/快变的外部约束)在正文标 `valid-as-of: YYYY-MM`; 复核时**超期的先重新核实、不盲信**——标 `needs-review`(不自动删、不静默淘汰)。这是"浮动数字别进长期层"的另一面: 结构进长期层、会漂的数带日期快照或指回带日期的历史条。纯复核纪律(agent/人应用), 非自动化功能。
 - **④ 冷/重要性打分**(`~/.claude/tools/automemory_audit.py` 的 `cold_split`, 只读): 区 × 新近(mtime) × 反链 × durability × 取代信号 → ②③ 候选。**读取上限只针对根 MEMORY.md 自动加载层**(子索引不占预算)。①锁热 / durability=axiom 锁热 / 枢纽(有反链)排除。只建议。
 - **③ 反思固化**(LLM 层, 定期): 读一批冷/重叠条 → 合并重叠(dedup)、砍已取代(§9)、项目专属条踢回各项目 `PROJECT_CONTEXT`(走 mindfile)。**移动/删除 = §9, 动前把清单给用户点头。**
 - 旧的"热/冷拆分"(`automemory_compact.py`, MEMORY.md↔MEMORY.archive.md)已被 MOC 取代(archive 溶解回子索引); compact 保留作最粗兜底, 但 MOC 是主结构。
