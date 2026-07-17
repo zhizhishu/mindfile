@@ -165,7 +165,11 @@ def compact(path: str | None, slugs: list[str] | None, from_audit: bool,
     arch_buckets, already = _parse_archive(archive_text)
 
     to_move = []       # (slug, region, subsection, line, line_no)
-    skipped = {"not_in_index": [], "region1_refused": [], "already_archived": [], "no_region": []}
+    skipped = {"not_in_index": [], "region1_refused": [], "already_archived": [],
+               "no_region": [], "axiom_refused": [], "hub_warned": []}
+    # 加载 fact 正文(排除 MEMORY* 索引), 供 axiom/反链判定(对齐 audit 的"axiom 等同①锁热")
+    bodies = {f.name: f.read_text(encoding="utf-8", errors="replace")
+              for f in mem_dir.glob("*.md") if not f.name.startswith("MEMORY")}
     for slug in want:
         if slug in already:
             skipped["already_archived"].append(slug)
@@ -181,6 +185,13 @@ def compact(path: str | None, slugs: list[str] | None, from_audit: bool,
             if e["region"] not in ("②", "③"):
                 skipped["no_region"].append(slug)
                 continue
+            # F2: durability=axiom 等同①锁热, 铁律永不归档(即便人工 --slugs 指名也硬拒)
+            if A._durability(bodies.get(slug + ".md", "")) == "axiom":
+                skipped["axiom_refused"].append(slug)
+                continue
+            # 反链枢纽(被别的记忆 [[引用]]): 告警但不拦, 交用户判断
+            if A._count_backlinks(slug, bodies) > 0:
+                skipped["hub_warned"].append(slug)
             to_move.append((slug, e["region"], e["subsection"], e["line"], e["line_no"]))
 
     if not to_move:
@@ -202,6 +213,29 @@ def compact(path: str | None, slugs: list[str] | None, from_audit: bool,
             b.append(line.rstrip())
     new_archive_text = _render_archive(arch_buckets)
 
+    # F1 护栏: _parse_archive 只采集"②③区内的 fact-link 行", 会丢弃区标题前的游离 fact 行
+    # 与一切叙事散文; 整体重渲染会静默丢失它们, 且被覆盖的 archive(下面)无从恢复。
+    # 宁可中止也不静默丢: 检测旧 archive 里"会被丢的实质内容", 有则拒跑。
+    def _sig_slugs(t):
+        return {m.group(1) for m in (_LINK_RE.search(l) for l in t.splitlines()) if m}
+    _hdr_lines = {l.strip() for l in ARCHIVE_HEADER.splitlines() if l.strip()}
+    _lost_slugs = sorted(_sig_slugs(archive_text) - _sig_slugs(new_archive_text))
+    _dropped_prose = [l.rstrip() for l in archive_text.splitlines()
+                      if l.strip() and l.strip() not in _hdr_lines
+                      and not l.lstrip().startswith("#")
+                      and not l.lstrip().startswith(">")
+                      and not _LINK_RE.search(l)]
+    if _lost_slugs or _dropped_prose:
+        print(f"[abort] {archive.name} 含 compact 无法安全保留的内容, 已中止(未改任何文件):")
+        if _lost_slugs:
+            print(f"          - {len(_lost_slugs)} 条区标题前的游离 fact 行会丢失: {_lost_slugs[:5]}")
+        if _dropped_prose:
+            print(f"          - {len(_dropped_prose)} 行叙事/散文会被整体重渲染丢弃, 例:")
+            for _l in _dropped_prose[:4]:
+                print(f"              {_l[:100]}")
+        print("        请改用 restructure(能兜住叙事)或人工处理 archive 后再跑 compact。")
+        return 1
+
     old_bytes = len(index_text.encode("utf-8"))
     new_bytes = len(new_index_text.encode("utf-8"))
 
@@ -218,13 +252,18 @@ def compact(path: str | None, slugs: list[str] | None, from_audit: bool,
         _print_skips(skipped)
         return 0
 
-    # --apply: 先备份 MEMORY.md, 再真写(fact 文件绝不碰)
+    # --apply: 先备份 MEMORY.md 与 archive, 再真写(fact 文件绝不碰)
     bak = index.with_suffix(index.suffix + ".bak-precompact")
     shutil.copy2(index, bak)
+    arc_bak_name = "(无 archive, 首次)"
+    if archive.exists():
+        arc_bak = archive.with_suffix(archive.suffix + ".bak-precompact")
+        shutil.copy2(archive, arc_bak)
+        arc_bak_name = arc_bak.name
     index.write_text(new_index_text, encoding="utf-8", newline="\n")
     archive.write_text(new_archive_text, encoding="utf-8", newline="\n")
     print(f"[done] 归档 {len(to_move)} 条索引行 → {archive.name}; "
-          f"MEMORY.md {old_bytes/1024:.1f}KB → {new_bytes/1024:.1f}KB; 备份 {bak.name}")
+          f"MEMORY.md {old_bytes/1024:.1f}KB → {new_bytes/1024:.1f}KB; 备份 {bak.name} + {arc_bak_name}")
     print("       (fact <slug>.md 文件一个没动; recall -q 照样全文命中)")
     for slug, region, subsection, _l, _lno in to_move:
         print(f"         - {slug} (区{region}" + (f"/{subsection}" if subsection else "") + ")")
@@ -241,6 +280,10 @@ def _print_skips(skipped: dict):
         print(f"       [拒绝] ①区恒定热、不归档: {skipped['region1_refused']}")
     if skipped["no_region"]:
         print(f"       [跳过] 未归到②③区: {skipped['no_region']}")
+    if skipped.get("axiom_refused"):
+        print(f"       [拒绝] durability=axiom 铁律恒热、不归档: {skipped['axiom_refused']}")
+    if skipped.get("hub_warned"):
+        print(f"       [告警] 被[[反链]]的枢纽条仍将归档(如不该归请从 --slugs 移除): {skipped['hub_warned']}")
 
 
 def main(argv=None) -> int:

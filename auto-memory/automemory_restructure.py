@@ -144,6 +144,18 @@ def _slug_multiset(text: str) -> list[str]:
     return out
 
 
+def _narrative_sig(text: str) -> list[str]:
+    """实质叙事行(非空、非 #/##/### 标题、非 > 引用/样板、非 fact-link 行)的 strip 归一。
+    用于守恒校验, 补'只数 fact 行/slug'漏掉的叙事维度(防'只比数量=假绿')。"""
+    out: list[str] = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s or s.startswith("#") or s.startswith(">") or FACT_LINE_RE.match(ln):
+            continue
+        out.append(s)
+    return out
+
+
 # ---------- 头部模板 ----------
 
 def _root_preamble() -> str:
@@ -315,6 +327,12 @@ def build(mem_dir: Path) -> dict:
     from collections import Counter
     dup_before = {s: c for s, c in Counter(before_slugs).items() if c > 1}
 
+    # 叙事守恒(F3): 输入端全部实质叙事行必须在输出端仍能找到, 否则"零信息损失"是假保证。
+    before_narr = set(_narrative_sig("\n".join(reg1) + "\n" + "\n".join(reg2)
+                                     + "\n" + "\n".join(reg3) + "\n" + archive_text))
+    after_narr = set(_narrative_sig(root_out + "\n" + tools_out + "\n" + proj_out))
+    narrative_lost = sorted(before_narr - after_narr)
+
     checks = {
         "fact_lines_before": before_count,
         "fact_lines_after": after_count,
@@ -325,6 +343,10 @@ def build(mem_dir: Path) -> dict:
         "slugs_gained": gained,
         "slug_set_preserved": (not lost and not gained),
         "duplicate_slugs_before": dup_before,
+        "narrative_before": len(before_narr),
+        "narrative_after": len(after_narr),
+        "narrative_lost": narrative_lost,
+        "narrative_conserved": (not narrative_lost),
     }
 
     return {
@@ -394,7 +416,8 @@ def main(argv=None) -> int:
             print("✅ " + msg)
         return 0
 
-    conserved = checks["fact_lines_conserved"] and checks["slug_set_preserved"]
+    conserved = (checks["fact_lines_conserved"] and checks["slug_set_preserved"]
+                 and checks["narrative_conserved"])
     if not conserved:
         # 守恒失败: 绝不写, 报错让人看
         if a.json:

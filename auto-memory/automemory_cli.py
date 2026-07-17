@@ -325,7 +325,8 @@ def cmd_record(a) -> int:
     except Exception as e:
         return _err(f"写后校验读失败: {e}", a.json)
 
-    gate = verify["file_parses"] and verify["type_ok"] and verify["durability_ok"]
+    gate = (verify["file_parses"] and verify["type_ok"]
+            and verify["durability_ok"] and verify["linked"])
     result = {"ok": True, "store": str(d), "file": str(target), "slug": slug,
               "type": a.type, "durability": dur or None, "section": section,
               "index_file": target_index_name, "index_line": line,

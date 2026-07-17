@@ -526,6 +526,10 @@ def _extract_referenced_paths(lines: list[str]) -> list[str]:
         for token in candidates:
             token = token.strip().strip("`").strip()
             token = _strip_inline_comment(token)
+            # file.md:127,131 / file.py:88 这类"文件:行号"引用 → 只留文件路径部分, 别把整串当死链
+            _lineref = re.match(r"^(.*\.[A-Za-z0-9]{1,8}):\d+(?:[,:]\d+)*$", token)
+            if _lineref:
+                token = _lineref.group(1)
             if not token or token.lower() in {"none", "unknown", "false", "true"}:
                 continue
             looks_path = (

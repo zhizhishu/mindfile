@@ -56,7 +56,7 @@ def _split_entries(text):
 
 
 def _anchor(seg):
-    return hashlib.sha1(seg.encode('utf-8')).hexdigest()[:8]
+    return hashlib.sha1(seg.encode('utf-8')).hexdigest()[:16]
 
 
 def _summary(title, seg):
@@ -68,7 +68,7 @@ def _archive_ids(p):
     if not os.path.exists(p):
         return set()
     txt = open(p, encoding='utf-8', errors='replace').read()
-    return set(re.findall(r'<!-- anchor:([0-9a-f]{8}) -->', txt))
+    return set(re.findall(r'<!-- anchor:([0-9a-f]{8,16}) -->', txt))
 
 
 def _is_pointer_line(line):
@@ -118,7 +118,11 @@ def _parse_pointer_section(seg):
             bucket(month)['ptrs'].append(line.rstrip())
         elif line.strip():                   # 叙事/反思综述散文(非空、非指针、非标题)
             bucket(cur if cur is not None else UNDATED)['narr'].append(line.rstrip())
-        # 空行丢弃, 渲染时重新加
+        else:                                # 空行: 保留叙事段落间分隔(仅当该桶叙事已有内容)
+            _m = cur if cur is not None else UNDATED
+            _b = buckets.get(_m)
+            if _b is not None and _b['narr'] and _b['narr'][-1] != "":
+                _b['narr'].append("")
     return buckets, order
 
 
@@ -134,8 +138,11 @@ def _render_pointer_section(buckets, order):
             continue
         parts.append(f"### {m}")
         parts.append("")
-        body = list(b['narr'])
-        if b['narr'] and b['ptrs']:
+        narr = list(b['narr'])
+        while narr and narr[-1] == "":        # 去掉叙事尾部空行, 保留段落间空行
+            narr.pop()
+        body = narr
+        if narr and b['ptrs']:
             body.append("")                  # 叙事与指针之间留一空行
         body.extend(b['ptrs'])
         parts.extend(body)
@@ -196,7 +203,8 @@ def compress(raw_path, apply=False):
     to_arch, n_ptr_kept, n_flow_dropped = [], 0, 0
     for title, seg in old:
         aid = _anchor(seg)
-        if aid in done:
+        # 幂等去重: 新锚点16位, 旧归档可能是8位(同一 sha1 前缀) —— 认前缀命中, 避免重归档。
+        if aid in done or aid[:8] in done:
             continue
         to_arch.append((aid, seg))            # 原文一律进 archive(只增不减, 与类型无关)
         if _keep_pointer(title):
