@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# mindfile 运行期产物 / 备份 (工具生成, 不入库)
+*.bak
+*.bak-*
+*.preview
+LOG.archive.md
+MEMORY.archive.md
+
+# 实际记忆数据 (私密, 绝不入库 —— 本仓只放系统/工具, 不放任何人的真实记忆)
+memory/
+MEMORY.md
+MEMORY.tools.md
+MEMORY.projects.md
+
+# OS
+.DS_Store
+Thumbs.db
