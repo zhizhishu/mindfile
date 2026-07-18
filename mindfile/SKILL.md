@@ -31,7 +31,6 @@ Typical commands from the skill directory:
 python scripts/mindfile_guard.py inspect "<target-path>"
 python scripts/mindfile_guard.py init-plan "<target-path>"
 python scripts/mindfile_guard.py verify "<target-path>"
-python scripts/mindfile_guard.py tool-auth "<target-path>" --tool <skill> --action <skill|subagent|high-risk>
 python scripts/mindfile_guard.py audit "<project-root>"
 python scripts/compress_log.py "<project-root>"            # LOG.md 历史压缩: dry-run 预览(安全默认)
 python scripts/compress_log.py "<project-root>" --apply    # 归档旧条目→LOG.archive.md(先备份, archive 只增)
@@ -88,8 +87,6 @@ Map layered memory into this Codex project style:
    - Read `PROJECT_ID.md` first if present.
    - Read project `AGENTS.md`, `PROJECT_CONTEXT.md`, and `TASK.md` if present.
    - Do not read all of `LOG.md` by default.
-   - On entry, read the `tool_policy` block (or run `tool-auth`): if a tool/subagent is
-     already granted, treat it as authorized this session and do not re-ask. See Tool-Use Gate.
 
 5. Recall first.
    - Before substantial project work, read the project's tiny index layer FIRST: `PROJECT_ID.md`, the `Tool Routes` and `SOP Index` sections in `AGENTS.md`, and the section headers of `PROJECT_CONTEXT.md`.
@@ -185,37 +182,12 @@ Before creating or changing project memory files, confirm:
 
 If any check fails, stop and ask or stay read-only.
 
-## Tool-Use Gate
-
-The write gate above governs *writing files*. A separate, parallel gate governs
-*using tools* (skills / subagents) so a project's standing authorization is honored
-across sessions instead of being re-asked every turn.
-
-Run before invoking a skill/CLI or spawning subagents in a confirmed project:
-
-```bash
-python scripts/mindfile_guard.py tool-auth "<project_root>" --tool <skill> --action <skill|subagent|high-risk>
-```
-
-Honor the result:
-
-- `authorized: true, must_ask: false` -> use the tool this session without re-asking.
-- `must_ask: true` -> follow the reason:
-  - `policy_present: false` -> the project never granted anything; ask the user once,
-    then capture the grant into `PROJECT_ID.md`'s `tool_policy` block (see Memory Intake).
-  - not in whitelist / `authorized` not true -> ask whether to add the grant.
-  - `risk_class: high` (delete / move-many / remote-write / kill-process) -> NEVER
-    persisted; confirm every time regardless of `tool_policy` (global rule §9).
-
-`tool_policy` answers "is this project allowed to use X"; the `Tool Routes` section in
-`AGENTS.md` answers "which tool for which task". Keep the two separate.
-
 ## Four-Layer Memory
 
 Use these project files consistently. This is the practical four-file operating layer, with `LOG.md` as archive:
 
 1. Boundary memory: `PROJECT_ID.md`
-   - Project name, root, type, parent storage root, allowed read/write, forbidden paths, task/log files, tool policy.
+   - Project name, root, type, parent storage root, allowed read/write, forbidden paths, task/log files.
 
 2. Behavior memory: `AGENTS.md`
    - Project-specific instructions, commands, conventions, local constraints.
@@ -266,7 +238,7 @@ Before writing memory, classify the information:
 - Working state: current task goal, next step, files touched, validation, open risks.
 - Stable project fact: architecture, commands, environment assumptions, project-specific constraints.
 - Project workflow: repeated steps that reliably solve a class of task inside this project.
-- Boundary fact: project root, storage root, allowed writes, forbidden paths, tool policy.
+- Boundary fact: project root, storage root, allowed writes, forbidden paths.
 
 Write each class to the right place:
 
@@ -274,7 +246,7 @@ Write each class to the right place:
 - Working state -> `TASK.md`.
 - Stable project fact -> `PROJECT_CONTEXT.md`.
 - Project workflow -> current project `AGENTS.md` short SOP.
-- Boundary fact -> `PROJECT_ID.md` (tool/subagent authorization goes in its `tool_policy` block).
+- Boundary fact -> `PROJECT_ID.md`.
 - Long historical record -> append `LOG.md` after a meaningful milestone.
 
 ## Promotion Rules

@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Inspect whether a folder is safe for project-local memory files (write gate),
-and whether a project has authorized a given tool/action (tool-use gate).
+and run read-only memory-hygiene audits.
 
-Two gates, same idea (deterministic, stdlib-only, no new dependencies):
+The write gate (deterministic, stdlib-only, no new dependencies):
 
   - WRITE gate  (inspect / init-plan / verify): can we safely create/modify project
     memory files in this folder? (boundary, storage-root, root_confidence)
 
-  - TOOL-USE gate (tool-auth): is this project authorized to use <tool> for <action>?
-    Reads PROJECT_ID.md's `tool_policy` block so a standing grant is honored across
-    sessions instead of re-asking every turn. High-risk actions are never persisted.
-
 parse_project_id() understands ONE level of YAML nesting and returns dotted keys
-(e.g. "serena.enabled", "tool_policy.authorized"); top-level scalars keep their bare
+(e.g. "serena.enabled", "serena.required"); top-level scalars keep their bare
 key, so all original callers keep working.
 """
 
@@ -50,9 +46,6 @@ MANIFESTS = [
 ]
 
 CODE_DIRS = ["src", "app", "apps", "packages", "lib", "tests", "test"]
-
-# Action -> risk class. high-risk actions are NEVER persisted; always re-confirmed.
-RISK_CLASS = {"skill": "low", "subagent": "medium", "high-risk": "high"}
 
 # Memory-hygiene thresholds for the read-only `audit` pass. TASK.md must stay small
 # enough to load every turn; past these limits it should be distilled.
@@ -407,92 +400,6 @@ def inspect(mode: str, raw_target: str) -> dict[str, Any]:
         "reasons": reasons,
         "warnings": warnings,
         "suggested_next": suggested_next,
-    }
-
-
-def _split_list(raw: str) -> list[str]:
-    return [item.strip().lower() for item in re.split(r"[,\s]+", raw or "") if item.strip()]
-
-
-def tool_auth(raw_target: str, tool: str, action: str) -> dict[str, Any]:
-    """Deterministic read-back gate for per-project TOOL-USE authorization.
-
-    Decision summary:
-      - high-risk action          -> NEVER authorized, always must_ask (never persisted)
-      - boundary not confirmed     -> must_ask (cannot trust a grant when root is unsure)
-      - no tool_policy block       -> must_ask (nothing was ever granted)
-      - tool_policy.authorized!=t  -> must_ask (grant withheld)
-      - subagent + subagents=true  -> authorized
-      - skill + tool in skills[]   -> authorized (explicit whitelist; '*'/'all' = wildcard)
-    """
-    base = inspect("inspect", raw_target)
-    data: dict[str, str] = {}
-    pid = base.get("project_id_path")
-    if pid:
-        data = parse_project_id(Path(pid))
-
-    policy_present = ("tool_policy" in data) or any(k.startswith("tool_policy.") for k in data)
-    authorized_flag = data.get("tool_policy.authorized", "").lower() == "true"
-    skills = _split_list(data.get("tool_policy.skills", ""))
-    subagents_flag = data.get("tool_policy.subagents", "").lower() == "true"
-    granted_by = data.get("tool_policy.granted_by", "")
-    granted_on = data.get("tool_policy.granted_on", "")
-
-    risk = RISK_CLASS.get(action, "unknown")
-    authorized = False
-    must_ask = True
-    reason = ""
-    source = pid or "none"
-
-    if action == "high-risk":
-        reason = ("high-risk action (delete/move-many/remote-write/kill-process): never persisted; "
-                  "always confirm per action (global rule §9).")
-        source = "policy:high_risk=ask-every-time"
-    elif base.get("root_confidence") != "high" or base.get("is_storage_root"):
-        reason = "project boundary not confirmed (root_confidence != high or storage-root); stored grant not trusted."
-    elif not policy_present:
-        reason = "no tool_policy block in PROJECT_ID.md; nothing was granted -> ask once, then capture it."
-    elif not authorized_flag:
-        reason = "tool_policy.authorized is not true; grant withheld."
-    elif action == "subagent":
-        authorized = subagents_flag
-        must_ask = not subagents_flag
-        reason = ("subagents granted (tool_policy.subagents=true)." if subagents_flag
-                  else "tool_policy.subagents is not true.")
-    elif action == "skill":
-        t = (tool or "").lower()
-        if t and t in skills:
-            authorized, must_ask = True, False
-            reason = f"'{tool}' is in tool_policy.skills whitelist."
-        elif skills and ("*" in skills or "all" in skills):
-            authorized, must_ask = True, False
-            reason = "wildcard grant in tool_policy.skills."
-        elif not t:
-            authorized = bool(skills)
-            must_ask = not bool(skills)
-            reason = "no --tool given; reporting whether any skills are whitelisted at all."
-        else:
-            reason = f"'{tool}' is not in tool_policy.skills whitelist {skills}."
-    else:
-        reason = f"unknown action '{action}'."
-
-    return {
-        "mode": "tool-auth",
-        "input_path": raw_target,
-        "resolved_project_root": base.get("resolved_project_root"),
-        "project_id_path": pid,
-        "root_confidence": base.get("root_confidence"),
-        "is_storage_root": base.get("is_storage_root"),
-        "tool": tool or None,
-        "action": action,
-        "risk_class": risk,
-        "policy_present": policy_present,
-        "authorized": authorized,
-        "must_ask": must_ask,
-        "granted_by": granted_by or None,
-        "granted_on": granted_on or None,
-        "source": source,
-        "reason": reason,
     }
 
 
@@ -895,7 +802,7 @@ def audit(raw_target: str) -> dict[str, Any]:
         suggestions.append(
             f"Found {len(cross_boundary_references)} referenced path(s) resolving OUTSIDE "
             f"project_root (possible cross-project leak); confirm each is intended "
-            f"(e.g. in tool_policy.managed_external_paths) or fix it."
+            f"(e.g. listed in the project's allowed_read boundary) or fix it."
         )
 
     # 3) Duplicate facts (identical non-trivial lines/headings in 2+ files) -------
@@ -985,23 +892,16 @@ def audit(raw_target: str) -> dict[str, Any]:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Inspect project boundaries (write gate), tool-use authorization (read-back gate), and run read-only memory-hygiene audits."
+        description="Inspect project boundaries (write gate) and run read-only memory-hygiene audits."
     )
     parser.add_argument(
         "mode",
-        choices=["inspect", "init-plan", "verify", "tool-auth", "audit"],
+        choices=["inspect", "init-plan", "verify", "audit"],
         help="inspect: read-only boundary check; init-plan: pre-initialization write gate; "
-             "verify: check existing memory files; tool-auth: read-back gate for per-project tool authorization; "
+             "verify: check existing memory files; "
              "audit: read-only memory-hygiene pass (non-destructive pruning suggestions).",
     )
     parser.add_argument("target_path", help="Folder to inspect.")
-    parser.add_argument("--tool", default="", help="Tool/skill name for tool-auth (e.g. fast-context).")
-    parser.add_argument(
-        "--action",
-        default="skill",
-        choices=["skill", "subagent", "high-risk"],
-        help="Action class for tool-auth.",
-    )
     parser.add_argument(
         "--pretty",
         action="store_true",
@@ -1009,9 +909,7 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.mode == "tool-auth":
-        result = tool_auth(args.target_path, args.tool, args.action)
-    elif args.mode == "audit":
+    if args.mode == "audit":
         result = audit(args.target_path)
     else:
         result = inspect(args.mode, args.target_path)

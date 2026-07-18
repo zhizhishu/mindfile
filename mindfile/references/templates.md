@@ -47,15 +47,6 @@ serena:
   required: false
   reason: <when useful>
 
-tool_policy:
-  authorized: false
-  skills: <comma-separated, e.g. fast-context, serena-pool, base, mindfile>
-  subagents: false
-  high_risk: ask-every-time
-  granted_by: <user|none>
-  granted_on: <YYYY-MM-DD|none>
-  scope_note: <one line: what tools/subagents this project is authorized to use>
-
 boundaries:
   allowed_read:
     - <absolute project_root>
