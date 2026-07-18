@@ -47,6 +47,8 @@ SECTION_HEADING = {"②": "## ② 工具用法 / 通用 SOP", "③": "## ③ 各
 VALID_DURABILITY = ("axiom", "pattern", "workaround", "project-state")
 MAX_INDEX_LINE = 200  # 与 automemory_audit.MAX_LINE 对齐: 索引行字符上限
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+DUP_NAME_THRESHOLD = 0.6   # slug 词元 Jaccard ≥ 此值 → 疑似重名
+DUP_DESC_THRESHOLD = 0.5   # desc 词元 Jaccard ≥ 此值 → 疑似重义
 
 
 def store_dir() -> Path:
@@ -239,6 +241,32 @@ def _linked_in_any_index(d: Path, slug: str) -> str | None:
     return None
 
 
+def _find_similar(d: Path, slug: str, desc: str, max_results: int = 3) -> list:
+    """写前查重: slug 词元 Jaccard + desc tokenize Jaccard, 只返回超阈值的候选(降序)。
+    复用 tokenize / list_files / parse_frontmatter, 零第三方依赖。"""
+    slug_words = set(slug.split("-"))
+    desc_toks = tokenize(desc)
+    results = []
+    for f in list_files(d):
+        if f.stem == slug:
+            continue  # 精确同名由 target.exists() 处理
+        body = f.read_text(encoding="utf-8", errors="replace")
+        fm = parse_frontmatter(body)
+        other_words = set(f.stem.split("-"))
+        union_n = slug_words | other_words
+        name_j = len(slug_words & other_words) / len(union_n) if union_n else 0.0
+        other_toks = tokenize(fm["description"])
+        union_d = desc_toks | other_toks
+        desc_j = len(desc_toks & other_toks) / len(union_d) if union_d else 0.0
+        if name_j >= DUP_NAME_THRESHOLD or desc_j >= DUP_DESC_THRESHOLD:
+            results.append({"name": f.stem, "name_j": round(name_j, 2),
+                            "desc_j": round(desc_j, 2),
+                            "score": round(max(name_j, desc_j), 2),
+                            "description": fm["description"]})
+    results.sort(key=lambda x: -x["score"])
+    return results[:max_results]
+
+
 def cmd_record(a) -> int:
     d = store_dir()
     idx = index_path(d)
@@ -258,6 +286,18 @@ def cmd_record(a) -> int:
     target = d / f"{slug}.md"
     if target.exists() and not a.force:
         return _err(f"记忆已存在: {slug}.md (要更新加 --force; 或换个 name)", a.json)
+
+    # 写前相似度查重: 仅新增时触发, 只警告到 stderr, 不硬拦
+    if not target.exists() and not getattr(a, "no_dup_check", False):
+        similars = _find_similar(d, slug, desc)
+        if similars:
+            print(f"⚠️  [dup-check] 发现 {len(similars)} 条疑似重复, 建议改用 --force --name <已有slug> 覆盖更新:",
+                  file=sys.stderr)
+            for s in similars:
+                print(f"    {s['name']}  (name_j={s['name_j']} desc_j={s['desc_j']})  — {s['description']}",
+                      file=sys.stderr)
+            print("    (继续新增加 --no-dup-check 跳过; 覆盖更新改用 --force --name <已有slug>)",
+                  file=sys.stderr)
 
     # 1. 写记忆文件 (UTF-8 无 BOM, LF) —— metadata.type 管归哪区, 可选 metadata.durability 管多耐放
     body = a.body.strip("\n")
@@ -471,6 +511,8 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--durability", choices=VALID_DURABILITY,
                    help="耐久度写入 metadata.durability (axiom永不归档/workaround加冷权重/pattern/project-state; 与 type 并存)")
     w.add_argument("--force", action="store_true", help="同名已存在时覆盖更新")
+    w.add_argument("--no-dup-check", dest="no_dup_check", action="store_true",
+                   help="跳过写前相似度查重检查 (默认: 发现疑似重复时警告到 stderr)")
     w.add_argument("--json", action="store_true")
     w.set_defaults(func=cmd_record)
 

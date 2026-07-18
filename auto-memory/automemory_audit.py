@@ -58,10 +58,18 @@ SUPERSEDE_KW = ("已废弃", "取代", "作废", "已失效", "superseded", "dep
 _NEG_CJK = "没未无非别不"          # 关键词前窗口出现这些字 => 视为否定, 不算取代信号
 _NEG_EN = ("no", "not", "never")
 # durability(耐久度)对 cold_split 的影响:
-#   axiom       → 公理/铁律, 永不列归档候选(等同 ① 锁热)。
-#   workaround  → 权宜/临时绕过, 加"冷"权重(更易被列为候选)。
-#   pattern/project-state/无 → 回退现有 mtime/反链打分(不特殊处理)。
-WORKAROUND_W = 5.0   # workaround 的冷权重(从常驻价值里扣, 让它更冷)
+#   axiom         → 公理/铁律, 永不列归档候选(等同 ① 锁热)。
+#   workaround    → 权宜/临时绕过, 加"冷"权重(更易被列为候选)。
+#   pattern       → 可复用技法, 加"热"权重(降低冷分, 更抗归档)。
+#   project-state → 项目状态/会腐烂, 加"冷"权重(更易被列为候选)。
+#   无            → 回退现有 mtime/反链打分(不特殊处理)。
+WORKAROUND_W = 5.0     # workaround 的冷权重(扣分, 让它更冷)
+PATTERN_W = 3.0        # pattern 的热权重(加分, 可复用技法·略偏热·更抗归档)
+PROJECT_STATE_W = 5.0  # project-state 的冷权重(扣分, 会腐烂·更易成候选; 与 WORKAROUND_W 量级一致)
+# 时态失效(E): 扫 fact 正文的 valid-as-of 日期与 superseded/needs-review 标记(只报不改)
+VALID_AS_OF_THRESHOLD_MONTHS = 6  # valid-as-of 超过此月数即在报告标 needs-review (可调)
+_VALID_AS_OF_RE = re.compile(r"valid[_-]as[_-]of\s*:\s*(\d{4}-\d{2})", re.IGNORECASE)
+_STALE_MARKER_RE = re.compile(r"\b(superseded|needs[_-]review)\b", re.IGNORECASE)
 
 
 # fact-bullet 索引行: `- [标题](slug.md) ...` (排除头部 blockquote 里的 `(slug.md)` 示例 / 📂 目录 bullet)
@@ -208,6 +216,42 @@ def _durability(body: str) -> str:
     return m.group(1).strip().lower() if m else ""
 
 
+def _scan_temporal_validity(bodies: dict[str, str],
+                            threshold_months: int = VALID_AS_OF_THRESHOLD_MONTHS) -> tuple[dict, dict]:
+    """只读扫 fact 正文的 valid-as-of 日期与既有 superseded/needs-review 标记。
+    返回:
+      stale   {slug: 'YYYY-MM'} — valid-as-of 超过 threshold_months 的条目
+      flagged {slug: [marker…]} — 正文已含 superseded/needs-review 标记的条目
+    绝不改文件。"""
+    now = datetime.datetime.now()
+    stale: dict = {}
+    flagged: dict = {}
+    for fname, body in bodies.items():
+        slug = fname[:-3]
+        m = _VALID_AS_OF_RE.search(body)
+        if m:
+            date_str = m.group(1)  # 'YYYY-MM'
+            try:
+                y, mo = int(date_str[:4]), int(date_str[5:7])
+                fact_date = datetime.datetime(y, mo, 1)
+                delta_months = (now.year - fact_date.year) * 12 + (now.month - fact_date.month)
+                if delta_months >= threshold_months:
+                    stale[slug] = date_str
+            except ValueError:
+                pass
+        markers = _STALE_MARKER_RE.findall(body)
+        if markers:
+            seen: set = set()
+            unique: list = []
+            for mk in markers:
+                lmk = mk.lower()
+                if lmk not in seen:
+                    seen.add(lmk)
+                    unique.append(mk)
+            flagged[slug] = unique
+    return stale, flagged
+
+
 def _residency_value(backlinks: int, age_days: float, superseded: bool) -> float:
     """常驻价值分(高=热=保留, 低=冷=归档候选)。
     枢纽(有反链)权重压倒性, 保证被反链的条目分高、永不列为候选。"""
@@ -256,9 +300,13 @@ def _cold_split(index_text: str, bodies: dict[str, str], mem_dir: Path, slugset:
             continue
         superseded = _has_supersede_signal(body) if body else False
         value = _residency_value(backlinks, age_days, superseded)
-        # durability=workaround: 权宜绕过, 加冷权重(扣分)使其更易成候选。
+        # durability 权重微调: workaround/project-state 扣分(更冷), pattern 加分(偏热)。
         if dur == "workaround":
             value -= WORKAROUND_W
+        elif dur == "pattern":
+            value += PATTERN_W
+        elif dur == "project-state":
+            value -= PROJECT_STATE_W
         # 该条索引行占的字节(含换行) —— 归档后对应索引文件会减少这么多
         line_bytes = len(e["line"].encode("utf-8")) + 1
         reasons = []
@@ -266,7 +314,12 @@ def _cold_split(index_text: str, bodies: dict[str, str], mem_dir: Path, slugset:
         reasons.append("无反链(非枢纽)" if backlinks == 0 else f"有{backlinks}反链(枢纽,偏热)")
         reasons.append(f"{age_days:.0f}天未更新")
         if dur:
-            reasons.append(f"durability={dur}" + ("(加冷权重)" if dur == "workaround" else ""))
+            _dur_note = {
+                "workaround": "(加冷权重)",
+                "pattern": "(加热权重)",
+                "project-state": "(加冷权重)",
+            }.get(dur, "")
+            reasons.append(f"durability={dur}{_dur_note}")
         if superseded:
             reasons.append("正文含取代/废弃信号")
         candidates.append({
@@ -449,6 +502,22 @@ def audit(mem_dir: Path | None = None) -> tuple[list[tuple[str, str, str]], dict
     if stale:
         findings.append(("INFO", "stale-filename", f"文件名含已删工具名(可改名+同步反链): {stale}"))
 
+    # 7. temporal validity — valid-as-of 超期 + 已有 superseded/needs-review 标记(只报不改)
+    stale_vao, already_flagged = _scan_temporal_validity(bodies)
+    if stale_vao:
+        findings.append(("WARN", "stale-valid-as-of",
+                         f"{len(stale_vao)} 条 fact 的 valid-as-of 超过 "
+                         f"{VALID_AS_OF_THRESHOLD_MONTHS} 个月(建议核验时效): "
+                         f"{dict(sorted(stale_vao.items()))}"))
+    if already_flagged:
+        findings.append(("INFO", "pre-flagged-stale",
+                         f"正文已含 superseded/needs-review 标记(汇总供核验): {already_flagged}"))
+    temporal_review = {
+        "threshold_months": VALID_AS_OF_THRESHOLD_MONTHS,
+        "stale_valid_as_of": stale_vao,
+        "pre_flagged_stale": already_flagged,
+    }
+
     lines = text.splitlines()
     subindex_bytes = {name: len(t.encode("utf-8")) for name, t in index_texts.items()
                       if name in (TOOLS_NAME, PROJECTS_NAME)}
@@ -476,7 +545,7 @@ def audit(mem_dir: Path | None = None) -> tuple[list[tuple[str, str, str]], dict
         cold_split["cut_to_read_limit"] = None
     if _root_bytes < COLD_TARGET_BYTES:
         cold_split["recommended_cut"] = None
-    return findings, summary, cold_split
+    return findings, summary, cold_split, temporal_review
 
 
 def main() -> int:
@@ -485,7 +554,7 @@ def main() -> int:
     ap.add_argument("--dir", help="审计指定 memory 目录(副本/fixture; 默认真仓)")
     args = ap.parse_args()
     mem_dir = Path(args.dir).expanduser() if args.dir else MEM_DIR
-    findings, summary, cold_split = audit(mem_dir)
+    findings, summary, cold_split, temporal_review = audit(mem_dir)
     errors = [f for f in findings if f[0] == "ERROR"]
     if args.json:
         print(json.dumps({
@@ -493,6 +562,7 @@ def main() -> int:
             "findings": [{"sev": s, "kind": k, "msg": m} for s, k, m in findings],
             "summary": summary,
             "cold_split": cold_split,
+            "temporal_review": temporal_review,
         }, ensure_ascii=False, indent=2))
     else:
         print("=== auto-memory 体检 (只报不改) ===")

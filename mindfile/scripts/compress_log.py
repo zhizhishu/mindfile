@@ -31,6 +31,7 @@ PTR_TITLE = "## 已归档历史(摘要指针)"
 UNDATED = "未分期"                          # 日期解析不出时的兜底月份桶
 PTR_HINT_THRESHOLD = 40                     # 反思信号: 总指针数超此值 → 提示
 UNCOVERED_MONTH_THRESHOLD = 3              # 反思信号: 未被叙事覆盖的月份 ≥ 此值 → 提示
+HINT_TOP_MONTHS = 5                        # 反思提示: 月份建议清单最多列几条
 
 MONTH_HEAD_RE = re.compile(r'^###\s+(\S+)')            # 月份子节标题 `### 2026-06`
 YM_RE = re.compile(r'(\d{4})-(\d{2})')                 # 从文本抽 YYYY-MM
@@ -153,12 +154,30 @@ def _render_pointer_section(buckets, order):
 
 
 def _reflection_hint(buckets, order):
-    """压缩输出末尾: 指针总数 > 阈值 或 未被叙事覆盖的月份数 ≥ 阈值 → 提示跑反思固化(只提示不自动做)。"""
+    """压缩输出末尾: 指针总数 > 阈值 或 未被叙事覆盖的月份数 ≥ 阈值 → 提示跑反思固化。
+    超阈值时列出建议压缩的月份清单(按指针数降序), 让操作者一眼知道该先压哪批。"""
     total = sum(len(buckets[m]['ptrs']) for m in order)
-    uncovered = sum(1 for m in order
-                    if YM_RE.fullmatch(m) and buckets[m]['ptrs'] and not buckets[m]['narr'])
+    uncovered_months = [m for m in order
+                        if YM_RE.fullmatch(m) and buckets[m]['ptrs'] and not buckets[m]['narr']]
+    uncovered = len(uncovered_months)
     if total > PTR_HINT_THRESHOLD or uncovered >= UNCOVERED_MONTH_THRESHOLD:
-        print("[hint] 索引偏长, 建议跑反思固化 SOP(见 SKILL.md)把老纪元压成叙事")
+        print(f"[hint] 反思固化建议: 指针总数 {total} 条(阈值 {PTR_HINT_THRESHOLD})"
+              f", 未叙事覆盖月份 {uncovered} 个(阈值 {UNCOVERED_MONTH_THRESHOLD})")
+        by_count = sorted(uncovered_months, key=lambda m: -len(buckets[m]['ptrs']))
+        if by_count:
+            print("[hint] 建议优先压缩(无叙事覆盖、指针最多优先):")
+            for m in by_count[:HINT_TOP_MONTHS]:
+                print(f"        {m}  {len(buckets[m]['ptrs'])} 条指针")
+            if len(by_count) > HINT_TOP_MONTHS:
+                print(f"        … 还有 {len(by_count) - HINT_TOP_MONTHS} 个月份未列, 跑 --apply 后重看")
+        elif total > PTR_HINT_THRESHOLD:
+            all_dated = [m for m in order if YM_RE.fullmatch(m) and buckets[m]['ptrs']]
+            top = sorted(all_dated, key=lambda m: -len(buckets[m]['ptrs']))[:HINT_TOP_MONTHS]
+            if top:
+                print("[hint] 各月均有叙事覆盖, 以下月份指针最多, 可深化综述:")
+                for m in top:
+                    print(f"        {m}  {len(buckets[m]['ptrs'])} 条指针")
+        print("[hint] 跑反思固化 SOP 见 SKILL.md")
 
 
 def compress(raw_path, apply=False):
