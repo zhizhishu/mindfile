@@ -35,19 +35,21 @@ MEMORY_FILES = [
 MANIFESTS = [
     "package.json",
     "pyproject.toml",
-    "setup.py",
     "go.mod",
     "Cargo.toml",
+    "composer.json",
     "pom.xml",
     "build.gradle",
     "settings.gradle",
-    "Gemfile",
-    "composer.json",
-    "requirements.txt",
-    "tsconfig.json",
-    "Makefile",
     "deno.json",
     "bun.lockb",
+]
+# is_code_project 专用(更宽): 额外含弱信号 manifest。
+# 🔴 绝不并入 MANIFESTS —— MANIFESTS 喂 own_manifest→root_confidence/write_allowed 与 is_storage_root 判定;
+#    掺入 setup.py/requirements.txt/Makefile 等弱信号会让"只含一个弱 manifest 的数据/子包目录"
+#    被误判成高置信项目根、放松写入门禁(2026-07-19 审计逮到的回归, 已隔离)。
+_CODE_MANIFESTS = MANIFESTS + [
+    "setup.py", "requirements.txt", "Gemfile", "tsconfig.json", "Makefile",
 ]
 
 CODE_DIRS = ["src", "app", "apps", "packages", "lib", "tests", "test"]
@@ -57,6 +59,7 @@ CODE_DIRS = ["src", "app", "apps", "packages", "lib", "tests", "test"]
 # when no manifest file is present. Counting stops as soon as the threshold is reached
 # (early exit) so we never fully traverse a giant tree.
 CODE_FILE_THRESHOLD = 15
+_MAX_WALK_DEPTH = 40  # 源码计数递归深度上限: 防符号环/病态深树把 is_code_project 打崩(它在门禁路径上)
 
 # Extensions counted as source code. Intentionally excludes data / markup / config.
 _CODE_SOURCE_EXTENSIONS = frozenset({
@@ -220,25 +223,28 @@ def is_code_project(root: Path) -> bool:
     """
     if not root.exists() or not root.is_dir():
         return False
-    # Manifest check – O(len(MANIFESTS)) stat calls, always fast.
-    if has_any(root, MANIFESTS):
+    # Manifest check – O(len(_CODE_MANIFESTS)) stat calls, always fast.
+    # 用 _CODE_MANIFESTS(更宽), 不用喂门禁的 MANIFESTS —— 别让弱信号 manifest 放松写入门禁。
+    if has_any(root, _CODE_MANIFESTS):
         return True
     # Source-file count with early exit so we never traverse a huge tree fully.
     count: list[int] = [0]
 
-    def _walk(path: Path) -> bool:
+    def _walk(path: Path, depth: int = 0) -> bool:
+        if depth > _MAX_WALK_DEPTH:
+            return False  # 深度封顶: 防符号环/病态深树逃逸
         try:
             for child in path.iterdir():
                 if child.is_dir():
                     if child.name not in _CODE_EXCLUDE_DIRS:
-                        if _walk(child):
+                        if _walk(child, depth + 1):
                             return True
                 elif child.is_file() and child.suffix.lower() in _CODE_SOURCE_EXTENSIONS:
                     count[0] += 1
                     if count[0] >= CODE_FILE_THRESHOLD:
                         return True
-        except OSError:
-            pass
+        except Exception:
+            pass  # 任何遍历异常都吞: is_code_project 绝不能崩(它在 inspect/audit 门禁路径上)
         return False
 
     return _walk(root)
@@ -430,7 +436,7 @@ def inspect(mode: str, raw_target: str) -> dict[str, Any]:
     # Populated for init-plan so the caller can include them in its creation plan;
     # also present (but potentially empty) in inspect/verify for transparency.
     suggested_optional_files: list[str] = []
-    if is_dir and is_code_project(target):
+    if is_dir and not is_storage_root and is_code_project(target):
         if not (target / "PROJECT_MAP.md").exists():
             suggested_optional_files.append("PROJECT_MAP.md")
 
@@ -931,7 +937,9 @@ def audit(raw_target: str) -> dict[str, Any]:
     # 6) Missing PROJECT_MAP.md in code projects ---------------------------------
     # Only report; never create. Creating files is outside audit's read-only contract.
     missing_project_map: dict[str, Any] = {"flagged": False}
-    if is_code_project(project_root) and not (project_root / "PROJECT_MAP.md").exists():
+    if (not base.get("is_storage_root")
+            and is_code_project(project_root)
+            and not (project_root / "PROJECT_MAP.md").exists()):
         missing_project_map = {
             "flagged": True,
             "severity": "WARN",

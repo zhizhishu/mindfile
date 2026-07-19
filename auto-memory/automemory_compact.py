@@ -121,7 +121,7 @@ def _render_archive(buckets: dict[str, dict]) -> str:
 def _select_from_audit(mem_dir: Path, target_bytes: int):
     """按 audit 的 cold_split 冷度顺序贪心取 slug, 到累计估算 < target_bytes 为止。
     取不到(候选不足)则取全部候选。返回 (slugs, reached, cold_split)。"""
-    _findings, _summary, cs = A.audit(mem_dir)
+    _findings, _summary, cs, _temporal = A.audit(mem_dir)  # audit() 2026-07-18 起返回 4 值(+temporal_review)
     chosen = []
     reached = False
     for c in cs["archive_candidates"]:

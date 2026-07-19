@@ -373,7 +373,7 @@ def _cold_split(index_text: str, bodies: dict[str, str], mem_dir: Path, slugset:
     }
 
 
-def audit(mem_dir: Path | None = None) -> tuple[list[tuple[str, str, str]], dict]:
+def audit(mem_dir: Path | None = None) -> tuple[list[tuple[str, str, str]], dict, dict, dict]:
     mem_dir = mem_dir or MEM_DIR
     index = mem_dir / INDEX_NAME
     archive = mem_dir / ARCHIVE_NAME
