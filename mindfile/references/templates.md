@@ -61,6 +61,36 @@ startup_check:
   - Do not read LOG.md unless history is needed.
 ```
 
+## PROJECT_MAP.md
+
+<!-- 由 fast-context 扫码蒸馏填充。控制在一屏内，只放帮 agent 秒懂的结构。
+     不写流水账、不写密钥、不写会变的数字。code 项目要求，docs/config 类型不强制。 -->
+
+```md
+# PROJECT_MAP.md
+
+## 入口(Entrypoints)
+
+- `<file or command>` — <一句话说这是什么入口，如 HTTP server / CLI / main.go>
+
+## 核心模块(每个一句职责)
+
+- `<module or package path>` — <这个模块做什么>
+- `<module or package path>` — <这个模块做什么>
+
+## 数据流 or 调用链(1-2 句)
+
+<请求 / 数据从入口经过哪几个主要模块、最终落到哪里。一两句说清主干，不需要面面俱到。>
+
+## 关键约定
+
+- <例：接口版本、错误处理规范、配置加载顺序、分支策略等>
+
+## 外部依赖 & 集成点
+
+- `<service or lib>` — <用途，如 PostgreSQL 主库 / GitHub Actions CI / Stripe webhook>
+```
+
 ## AGENTS.md
 
 ```md

@@ -35,17 +35,40 @@ MEMORY_FILES = [
 MANIFESTS = [
     "package.json",
     "pyproject.toml",
+    "setup.py",
     "go.mod",
     "Cargo.toml",
-    "composer.json",
     "pom.xml",
     "build.gradle",
     "settings.gradle",
+    "Gemfile",
+    "composer.json",
+    "requirements.txt",
+    "tsconfig.json",
+    "Makefile",
     "deno.json",
     "bun.lockb",
 ]
 
 CODE_DIRS = ["src", "app", "apps", "packages", "lib", "tests", "test"]
+
+# --- Code-project detection ---------------------------------------------------
+# Number of source-code files at or above which a directory is treated as a code project,
+# when no manifest file is present. Counting stops as soon as the threshold is reached
+# (early exit) so we never fully traverse a giant tree.
+CODE_FILE_THRESHOLD = 15
+
+# Extensions counted as source code. Intentionally excludes data / markup / config.
+_CODE_SOURCE_EXTENSIONS = frozenset({
+    ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".kt",
+    ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift", ".scala", ".vue",
+})
+
+# Directories skipped during the recursive source-file count.
+_CODE_EXCLUDE_DIRS = frozenset({
+    ".git", "node_modules", "vendor", "dist", "build",
+    "__pycache__", ".venv", "target", ".next",
+})
 
 # Memory-hygiene thresholds for the read-only `audit` pass. TASK.md must stay small
 # enough to load every turn; past these limits it should be distilled.
@@ -185,6 +208,40 @@ def slug(value: str) -> str:
 
 def has_any(path: Path, names: list[str]) -> bool:
     return any((path / name).exists() for name in names)
+
+
+def is_code_project(root: Path) -> bool:
+    """Return True when *root* is recognisably a software/code project.
+
+    Fast path: any manifest file from MANIFESTS is present.
+    Slow path: recursively count source-code files, stopping (early exit) once
+    CODE_FILE_THRESHOLD is reached; excluded dirs (_CODE_EXCLUDE_DIRS) are skipped.
+    Docs-only, config-only, and storage-root directories return False.
+    """
+    if not root.exists() or not root.is_dir():
+        return False
+    # Manifest check – O(len(MANIFESTS)) stat calls, always fast.
+    if has_any(root, MANIFESTS):
+        return True
+    # Source-file count with early exit so we never traverse a huge tree fully.
+    count: list[int] = [0]
+
+    def _walk(path: Path) -> bool:
+        try:
+            for child in path.iterdir():
+                if child.is_dir():
+                    if child.name not in _CODE_EXCLUDE_DIRS:
+                        if _walk(child):
+                            return True
+                elif child.is_file() and child.suffix.lower() in _CODE_SOURCE_EXTENSIONS:
+                    count[0] += 1
+                    if count[0] >= CODE_FILE_THRESHOLD:
+                        return True
+        except OSError:
+            pass
+        return False
+
+    return _walk(root)
 
 
 def find_up(start: Path, filename: str) -> Path | None:
@@ -369,6 +426,14 @@ def inspect(mode: str, raw_target: str) -> dict[str, Any]:
     if mode == "init-plan" and not write_allowed:
         warnings.append("Initialization is not allowed until the guard passes.")
 
+    # Optional files recommended for code projects (only when the directory exists).
+    # Populated for init-plan so the caller can include them in its creation plan;
+    # also present (but potentially empty) in inspect/verify for transparency.
+    suggested_optional_files: list[str] = []
+    if is_dir and is_code_project(target):
+        if not (target / "PROJECT_MAP.md").exists():
+            suggested_optional_files.append("PROJECT_MAP.md")
+
     return {
         "mode": mode,
         "input_path": raw_target,
@@ -387,6 +452,7 @@ def inspect(mode: str, raw_target: str) -> dict[str, Any]:
         "write_allowed": write_allowed,
         "can_initialize_memory": write_allowed and bool(missing_memory_files),
         "missing_memory_files": missing_memory_files,
+        "suggested_optional_files": suggested_optional_files,
         "required_files": required_files,
         "signals": {
             "explicit_storage_marker": explicit_storage_root,
@@ -862,6 +928,26 @@ def audit(raw_target: str) -> dict[str, Any]:
                 f"entries are excluded."
             )
 
+    # 6) Missing PROJECT_MAP.md in code projects ---------------------------------
+    # Only report; never create. Creating files is outside audit's read-only contract.
+    missing_project_map: dict[str, Any] = {"flagged": False}
+    if is_code_project(project_root) and not (project_root / "PROJECT_MAP.md").exists():
+        missing_project_map = {
+            "flagged": True,
+            "severity": "WARN",
+            "finding": "missing-project-map",
+            "message": (
+                "Code project is missing PROJECT_MAP.md. "
+                "Add one (see references/templates.md) so agents can orient to the "
+                "architecture in one screen without a full repo scan."
+            ),
+        }
+        suggestions.append(
+            "Code project is missing PROJECT_MAP.md (detected via manifest or ≥ 15 source files). "
+            "Use fast-context to scan the architecture and distill it into PROJECT_MAP.md "
+            "(template in references/templates.md) before starting work."
+        )
+
     if base.get("is_storage_root"):
         suggestions.append(
             "Target resolves to a storage root; it should not hold project memory files at all."
@@ -884,6 +970,7 @@ def audit(raw_target: str) -> dict[str, Any]:
             "duplicate_facts": duplicate_facts,
             "stale_tool_snapshots": stale_tool_snapshots,
             "log_entry_scoring": log_entry_scoring,
+            "missing_project_map": missing_project_map,
         },
         "suggestions": suggestions,
         "note": "Read-only hygiene pass; never deletes. Deleting memory is high-risk; confirm with the user.",

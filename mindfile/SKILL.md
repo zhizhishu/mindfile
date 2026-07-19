@@ -97,6 +97,7 @@ Map layered memory into this Codex project style:
    - Create minimal files when a confirmed project lacks them.
    - Preserve existing user content.
    - Append history to `LOG.md`; keep `TASK.md` short.
+   - code 项目（有 manifest 或源码 ≥ 15 个）开工若缺 `PROJECT_MAP.md`，先用 fast-context 探架构蒸馏一份再动手（不靠软"请先读"，软指令会被满窗上下文稀释）。
 
 ## Scope Boundary
 
@@ -221,7 +222,7 @@ When initializing or refreshing project files, add a short `Tool Routes` section
 Default routes:
 
 - Project memory, project naming, `TASK.md`, `LOG.md`, `PROJECT_CONTEXT.md` -> `mindfile`.
-- Tool exposure, tool failure, or a specific skill/CLI/MCP (browser automation, code search, docs lookup, design generation, etc.) -> your project's tool-router skill.
+- Tool exposure, tool failure, agent-browser-cli, Chrome, Serena, fast-context, Stitch, Gitee, Context7, fusionsearch, Desktop Commander, Sequential Thinking -> `base`.
 - Unknown entry point or broad codebase context -> fast-context `fast_context_search` when project boundary is confirmed; otherwise local `rg`.
 - Symbol references, call chains, semantic edits, refactor impact -> Serena Pool when project boundary is confirmed; otherwise local `rg` / AST.
 - UI, visual design, prototype, design review -> relevant design skill.
@@ -333,9 +334,9 @@ When initializing a confirmed project, create:
 - `TASK.md`
 - `LOG.md`
 
-Optional:
+**code 项目要求**:
 
-- `PROJECT_MAP.md` for large projects or projects with repeated navigation cost.
+- `PROJECT_MAP.md` — code 项目（有 manifest 或源码文件 ≥ 15 个）开工前若缺失须补；docs / config / 其他类型不强制。用 fast-context 扫架构蒸馏填充，控制在一屏内。参见 `references/templates.md`。
 - `decisions.md` (append-only ADR log) when architecture decisions accumulate — see the "Decisions & time-sensitive facts" note under LOG lifecycle.
 
 For exact templates, read `references/templates.md`.
